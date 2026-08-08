@@ -76,6 +76,47 @@ watches the first `watch.windowSec` (90s) and enters only if ALL of these hold:
 | Trailing stop | 25% off peak, armed after +40% |
 | Max hold | 5 minutes |
 
+**Meta detection — "get in early on the trend."** Pump.fun runs on narrative
+waves: when a theme hits, dozens of same-keyword tokens launch within minutes.
+The `MetaDetector` tokenizes every launch's name/symbol and tracks keyword
+frequency over a rolling 30-minute window. Once a keyword has appeared in
+`hotCount` (4) launches, subsequent tokens matching it are flagged as riding an
+established wave and get *relaxed demand thresholds* (`buyerRelief`,
+`inflowRelief` in `config.json`). Safety filters — dev-buy size, dev selling,
+whale-share — never relax. Wave *starters* deliberately don't qualify: the
+crowd has to prove itself first.
+
+**Copy trading — "copy someone who's actually good."** Every Solana wallet's
+trades are public in real time. Instead of copying influencer wallets (crowded,
+front-run, often bait), the bot builds its own private leaderboard:
+
+1. Every trade the bot observes is scored in `data/walletbook.json` —
+   average-cost P&L per wallet, closed-trade count, win rate.
+2. `npm run leaderboard` prints the top wallets it has seen so far.
+3. With `copy.auto.enabled`, the bot periodically promotes wallets that clear
+   the bar (default: 10+ closed trades AND 3+ SOL realized profit *while
+   watched*) to "leaders", subscribes to their account streams, and mirrors
+   their bonding-curve buys at your own position size.
+4. Copied positions exit on **whichever comes first**: the leader selling
+   (`leader-sold`), or your own stop-loss / take-profit / trailing stop /
+   timeout. You are never holding just because the leader is.
+
+You can also pin wallets manually in `copy.wallets`. The auto-discovery bar is
+intentionally strict — it needs the bot running (paper is fine) for hours to
+days before anyone qualifies. That's the point: copy verified performance, not
+vibes.
+
+**Copy-trading caveats, honestly:**
+
+- You always buy *after* the leader, at a worse price — their buy moved the
+  curve before you got there. A leader whose edge is pure speed won't be
+  profitable to copy even if they're profitable themselves.
+- Wallets that look brilliant may be insiders or token deployers whose visible
+  trades are the exit of a plan you can't see. The closed-trades minimum and
+  win-rate visibility help, but nothing fully protects against this.
+- The walletbook only scores what it observes — a wallet's "P&L" here is its
+  performance during your watching window, not lifetime truth.
+
 **Risk limits (checked before every entry).**
 
 | Limit | Default |

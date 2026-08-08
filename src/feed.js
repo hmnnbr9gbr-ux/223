@@ -16,6 +16,7 @@ export class Feed extends EventEmitter {
     this.degradedWarned = false;
     this.ws = null;
     this.watched = new Set();
+    this.watchedAccounts = new Set();
     this.backoffMs = 1000;
     this.stopped = false;
   }
@@ -30,6 +31,9 @@ export class Feed extends EventEmitter {
       this.send({ method: 'subscribeNewToken' });
       if (this.watched.size > 0) {
         this.send({ method: 'subscribeTokenTrade', keys: [...this.watched] });
+      }
+      if (this.watchedAccounts.size > 0) {
+        this.send({ method: 'subscribeAccountTrade', keys: [...this.watchedAccounts] });
       }
       this.emit('open');
     });
@@ -77,6 +81,16 @@ export class Feed extends EventEmitter {
   unwatchToken(mint) {
     if (!this.watched.delete(mint)) return;
     this.send({ method: 'unsubscribeTokenTrade', keys: [mint] });
+  }
+
+  /** Replace the set of copy-traded leader wallets we listen to. */
+  setWatchedAccounts(addrs) {
+    const next = new Set(addrs);
+    const removed = [...this.watchedAccounts].filter((a) => !next.has(a));
+    const added = [...next].filter((a) => !this.watchedAccounts.has(a));
+    if (removed.length > 0) this.send({ method: 'unsubscribeAccountTrade', keys: removed });
+    if (added.length > 0) this.send({ method: 'subscribeAccountTrade', keys: added });
+    this.watchedAccounts = next;
   }
 
   stop() {

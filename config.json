@@ -21,6 +21,26 @@
     "maxHoldSec": 300,
     "exitOnCreatorSell": true
   },
+  "meta": {
+    "enabled": true,
+    "windowMin": 30,
+    "hotCount": 4,
+    "buyerRelief": 3,
+    "inflowRelief": 0.6
+  },
+  "copy": {
+    "enabled": true,
+    "wallets": [],
+    "followSells": true,
+    "buyAmountSol": 0.03,
+    "auto": {
+      "enabled": true,
+      "top": 3,
+      "minClosedTrades": 10,
+      "minPnlSol": 3,
+      "refreshMin": 10
+    }
+  },
   "risk": {
     "dailyLossLimitSol": 0.15,
     "maxSpendPerDaySol": 0.5

@@ -31,6 +31,8 @@ export class TokenTracker {
 
     this.state = 'WATCHING';
     this.position = null; // set by the engine on fill
+    this.metaHot = false; // set by the engine when the token rides a hot narrative wave
+    this.source = 'scan'; // 'scan' | 'copy'
   }
 
   get ageSec() { return (Date.now() - this.createdAt) / 1000; }
@@ -74,8 +76,20 @@ export class TokenTracker {
     if (this.creatorSold) return Decision.DROP; // dev already dumping pre-entry
     if (age < e.minAgeSec) return Decision.NONE;
     if (this.devBuySol > e.maxDevBuySol) return Decision.DROP;
-    if (this.uniqueBuyers < e.minUniqueBuyers) return Decision.NONE;
-    if (this.netInflowSol < e.minNetInflowSol) return Decision.NONE;
+
+    // A token riding an established narrative wave gets relaxed demand
+    // thresholds — the crowd is already proven, we just need this token to
+    // catch it. Safety filters (dev buy, dev sell, whale share) never relax.
+    const m = this.cfg.meta ?? {};
+    const minBuyers = this.metaHot
+      ? Math.max(2, e.minUniqueBuyers - (m.buyerRelief ?? 0))
+      : e.minUniqueBuyers;
+    const minInflow = this.metaHot
+      ? e.minNetInflowSol * (m.inflowRelief ?? 1)
+      : e.minNetInflowSol;
+
+    if (this.uniqueBuyers < minBuyers) return Decision.NONE;
+    if (this.netInflowSol < minInflow) return Decision.NONE;
     if (this.topBuyerShare > e.maxTopBuyerShare) return Decision.NONE;
     return Decision.ENTER;
   }
