@@ -55,3 +55,15 @@ test('top() gates on sample size and profit', () => {
   assert.equal(top[0].addr, 'GOOD');
   assert.ok(top[0].winRate === 1);
 });
+
+test('prune evicts unproven wallets and oldest positions', () => {
+  const b = book();
+  for (let i = 0; i < 30; i++) {
+    b.onTrade(buy(`W${i}`, 'M1', 0.1, 100)); // 30 wallets, no closed trades
+  }
+  b.onTrade(sell('W0', 'M1', 0.2, 100)); // W0 becomes proven
+  b.prune({ maxWallets: 10, maxPositions: 5 });
+  assert.ok(b.wallets.size <= 11); // 10 cap + proven W0 survives regardless
+  assert.ok(b.wallets.has('W0'));
+  assert.ok(b.positions.size <= 5);
+});

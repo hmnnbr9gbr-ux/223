@@ -27,7 +27,8 @@ risk, and sells — with your own single wallet.
 
 ## Quick start (paper mode — no wallet, no key, no money)
 
-The default `dataSource` is `"rpc"`, which needs **no API key at all**:
+The default `dataSource` is `"chain"`, which needs **no API key at all** and
+still gets the **full trade stream with buyer identity**:
 
 ```bash
 npm install
@@ -37,40 +38,40 @@ npm run paper
 That's it. This works because pump.fun's data is on-chain and public:
 
 - **Discovery** uses PumpPortal's *free* `subscribeNewToken` stream (no key).
-- **Price + money-flow** comes from reading each token's bonding-curve account
-  directly on a public **Solana RPC** (`accountSubscribe`), decoded locally in
-  `src/pumpcurve.js`. This is the same reserve data PumpPortal charges for —
-  free, because the blockchain is free to read.
+- **Trades** come from one `logsSubscribe` on the pump.fun program via a
+  Solana RPC: the program emits a `TradeEvent` for every bonding-curve trade —
+  mint, side, size, **buyer wallet**, reserves — which `src/pumpevents.js`
+  decodes locally (layout verified against live mainnet). This is the same
+  per-trade data PumpPortal meters, read straight from the chain for free.
 
-### The two data sources
+### The three data sources
 
-| | `dataSource: "rpc"` (default, free) | `dataSource: "portal"` (paid) |
-|---|---|---|
-| Cost | $0 | 0.01 SOL / 10k trade events |
-| Key needed | none | funded PumpPortal key |
-| Price / SOL inflow | ✅ (on-chain reserves) | ✅ |
-| Unique-buyer & whale filters | ❌ (reserve momentum instead) | ✅ |
-| Meta-wave detection | ✅ | ✅ |
-| Copy trading & wallet scoring | ❌ (needs per-trade identity) | ✅ |
+| | `"chain"` (default, free) | `"rpc"` (free fallback) | `"portal"` (paid) |
+|---|---|---|---|
+| Cost | $0 | $0 | 0.01 SOL / 10k events |
+| Key needed | none | none | funded PumpPortal key |
+| Price / SOL inflow | ✅ | ✅ (reserves) | ✅ |
+| Unique-buyer & whale filters | ✅ | ❌ (reserve momentum) | ✅ |
+| Dev-sell insta-exit | ✅ | ❌ | ✅ |
+| Meta-wave detection | ✅ | ✅ | ✅ |
+| Copy trading & wallet scoring | ✅ (sees ALL trades) | ❌ | ✅ (watched only) |
 
-Why the split: a bonding-curve account tells you *how much* SOL is in the curve
-(→ price, net inflow) but not *who* traded. Per-wallet features (the
-unique-buyer filter, copy trading, the leaderboard) need per-trade identity,
-which only the paid trade stream (or heavier on-chain transaction parsing)
-provides. In free mode the bot substitutes **reserve-momentum** entry filters:
-minimum reserve up-ticks (`reserve.minTicks`, an activity proxy) plus minimum
-net SOL inflow (`reserve.minNetInflowSol`).
+Chain mode actually beats the paid feed for wallet scoring: the paid stream
+only reports tokens/accounts you subscribed to, while the chain firehose
+carries **every pump.fun trade platform-wide**, so the copy-trade leaderboard
+accumulates candidates dramatically faster. `"rpc"` mode (bonding-curve
+`accountSubscribe`, price/inflow only) remains as a low-bandwidth fallback if
+a throttled RPC can't sustain the log firehose.
 
 **Public RPC warning:** `api.mainnet-beta.solana.com` (the default) is heavily
-rate-limited and will throttle or drop subscriptions under load. For real use,
-put a free Helius / QuickNode / Triton WebSocket URL in `config.rpcWsUrl` — it
-massively improves how many tokens you can watch and how fast reserve updates
-arrive.
+rate-limited; the log firehose is a lot of traffic and public endpoints may
+throttle or drop it. For real use, put a **free** Helius / QuickNode / Triton
+WebSocket URL in `config.rpcWsUrl` — still $0, dramatically more reliable.
 
-### To use copy trading / wallet scoring (paid data)
+### Paid mode (optional)
 
-PumpPortal's per-trade streams need an API key funded with ≥0.02 SOL. Set
-`dataSource: "portal"` in `config.json` and:
+Only worth it if a hosted, filtered stream turns out more reliable than your
+RPC. Set `dataSource: "portal"` and:
 
 ```bash
 export PUMPBOT_PORTAL_KEY="your-pumpportal-api-key"
@@ -202,6 +203,8 @@ Live-mode caveats:
 src/
   index.js          engine: wires feeds → trackers → executor → portfolio
   feed.js           PumpPortal WS client (free new-token; paid trade/account)
+  chainfeed.js      FREE full trade stream: logsSubscribe on the pump program
+  pumpevents.js     decode TradeEvent (buyer identity) from program logs
   rpcfeed.js        FREE Solana RPC accountSubscribe → bonding-curve reserves
   pumpcurve.js      decode a bonding-curve account (borsh) from chain data
   strategy.js       TokenTracker state machine: WATCHING → HOLDING → DONE

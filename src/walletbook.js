@@ -74,6 +74,29 @@ export class WalletBook {
     }
   }
 
+  /**
+   * Bound memory on firehose feeds (the chain feed sees every pump.fun trade).
+   * Evicts the least-recently-seen unproven wallets and oldest open positions.
+   */
+  prune({ maxWallets = 30_000, maxPositions = 60_000 } = {}) {
+    if (this.wallets.size > maxWallets) {
+      const candidates = [...this.wallets.entries()]
+        .filter(([, w]) => w.closed === 0)
+        .sort((a, b) => a[1].lastSeen - b[1].lastSeen);
+      for (const [addr] of candidates.slice(0, this.wallets.size - maxWallets)) this.wallets.delete(addr);
+      this.dirty = true;
+    }
+    if (this.positions.size > maxPositions) {
+      const excess = this.positions.size - maxPositions;
+      let i = 0;
+      for (const key of this.positions.keys()) { // Map preserves insertion order: oldest first
+        if (i++ >= excess) break;
+        this.positions.delete(key);
+      }
+      this.dirty = true;
+    }
+  }
+
   /** Top wallets by observed realized PnL, gated on sample size and profit. */
   top(n, { minClosed = 10, minPnlSol = 1 } = {}) {
     return [...this.wallets.entries()]

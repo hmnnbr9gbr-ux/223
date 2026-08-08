@@ -1,6 +1,6 @@
 {
   "mode": "paper",
-  "dataSource": "rpc",
+  "dataSource": "chain",
   "rpcWsUrl": "wss://api.mainnet-beta.solana.com",
   "buyAmountSol": 0.03,
   "maxConcurrentPositions": 2,

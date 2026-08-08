@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { Feed } from './feed.js';
 import { RpcFeed } from './rpcfeed.js';
+import { ChainFeed } from './chainfeed.js';
 import { TokenTracker, Decision } from './strategy.js';
 import { Portfolio } from './portfolio.js';
 import { PaperExecutor } from './executors/paper.js';
@@ -58,34 +59,40 @@ async function main() {
 
   const portfolio = new Portfolio(cfg, log);
   const meta = new MetaDetector(cfg.meta ?? {});
-  const useRpc = (cfg.dataSource ?? 'rpc') === 'rpc';
+  const dataSource = cfg.dataSource ?? 'chain'; // 'chain' (free, full) | 'rpc' (free, reserves) | 'portal' (paid)
+  const useRpc = dataSource === 'rpc';
+  const useChain = dataSource === 'chain';
   const portalKey = process.env.PUMPBOT_PORTAL_KEY ?? null;
 
   // Discovery always uses PumpPortal's FREE new-token stream (no key needed).
   const feed = new Feed(log, { apiKey: portalKey });
 
-  // Price / inflow data source.
+  // Price / trade data source.
   let rpcFeed = null;
+  let chainFeed = null;
   let copyEnabled = cfg.copy?.enabled ?? false;
-  if (useRpc) {
-    log.info('data source: FREE on-chain RPC (bonding-curve reserves) — no PumpPortal key needed');
-    rpcFeed = new RpcFeed(log, cfg.rpcWsUrl ?? 'wss://api.mainnet-beta.solana.com');
+  const rpcWsUrl = cfg.rpcWsUrl ?? 'wss://api.mainnet-beta.solana.com';
+  if (useChain) {
+    log.info('data source: FREE on-chain program logs — full trade stream with buyer identity, no key');
+    chainFeed = new ChainFeed(log, rpcWsUrl);
+    log.warn('public RPCs rate-limit log firehoses; a free Helius/QuickNode WSS in config.rpcWsUrl is strongly recommended.');
+  } else if (useRpc) {
+    log.info('data source: FREE on-chain RPC (bonding-curve reserves) — no key needed');
+    rpcFeed = new RpcFeed(log, rpcWsUrl);
     if (copyEnabled) {
       copyEnabled = false;
-      log.warn('copy trading + wallet scoring need per-trade identity (metered PumpPortal streams);');
-      log.warn('they are OFF in free rpc mode. Set dataSource:"portal" + PUMPBOT_PORTAL_KEY to use them.');
+      log.warn('copy trading + wallet scoring need per-trade identity — OFF in reserve mode.');
+      log.warn('Use dataSource:"chain" (free) or "portal" (paid) to enable them.');
     }
-    log.warn('rpc mode note: reserves give price + SOL inflow, but NOT unique-buyer count or');
-    log.warn('whale share — entries use reserve-momentum filters instead. Public RPCs are rate-limited;');
-    log.warn('a free Helius/QuickNode WSS in config.rpcWsUrl is strongly recommended.');
+    log.warn('reserve mode gives price + SOL inflow but not buyer identity; entries use reserve-momentum filters.');
   } else {
     if (!portalKey) {
       log.warn('portal data mode needs PUMPBOT_PORTAL_KEY (funded >=0.02 SOL) for trade/account streams.');
-      log.warn('Without it the bot sees launches but can NEVER enter. Use dataSource:"rpc" for a free path.');
+      log.warn('Without it the bot can NEVER enter. dataSource:"chain" gives the same data free.');
     }
     feed.on('degraded', (message) => {
       log.error(`feed is DEGRADED (creations only, no trade data): ${message}`);
-      log.error('entries are impossible — set a funded PUMPBOT_PORTAL_KEY or switch dataSource to "rpc".');
+      log.error('entries are impossible — set a funded PUMPBOT_PORTAL_KEY or switch dataSource to "chain".');
     });
   }
 
@@ -97,7 +104,7 @@ async function main() {
     const t = trackers.get(mint);
     trackers.delete(mint);
     if (useRpc) { if (t?.bondingCurveKey) rpcFeed.unwatchCurve(t.bondingCurveKey); }
-    else feed.unwatchToken(mint);
+    else if (!useChain) feed.unwatchToken(mint); // chain mode: one global sub, nothing to unwind
   };
 
   const enter = async (t, { source = 'scan', buyAmountSol = cfg.buyAmountSol, leader = null } = {}) => {
@@ -187,18 +194,21 @@ async function main() {
     if (wave.hot) log.info(`meta wave "${wave.word}" — relaxed entry for ${t.symbol} (${t.mint.slice(0, 8)}…)`);
     trackers.set(t.mint, t);
     if (useRpc) rpcFeed.watchCurve(t.mint, t.bondingCurveKey);
-    else feed.watchToken(t.mint);
+    else if (!useChain) feed.watchToken(t.mint);
   });
 
-  // Paid path: full per-trade data (buyer identity -> unique-buyer filter, copy, scoring).
-  feed.on('trade', (msg) => {
+  // Full per-trade path (buyer identity -> unique-buyer filter, copy, scoring).
+  // Fed by the paid portal stream OR the free chain feed — identical shape.
+  const onTradeMsg = (msg) => {
     book.onTrade(msg); // score every wallet we can see, always
     if (leaders.has(msg.traderPublicKey)) onLeaderTrade(msg);
     const t = trackers.get(msg.mint);
     if (t) act(t, t.onTrade(msg));
-  });
+  };
+  feed.on('trade', onTradeMsg);
+  if (useChain) chainFeed.on('trade', onTradeMsg);
 
-  // Free path: bonding-curve reserve updates (price + inflow, no buyer identity).
+  // Reserve path: curve updates only (price + inflow, no buyer identity).
   if (useRpc) {
     rpcFeed.on('reserve', (u) => {
       const t = trackers.get(u.mint);
@@ -220,7 +230,9 @@ async function main() {
     const changed = next.size !== leaders.size || [...next].some((a) => !leaders.has(a));
     if (changed) {
       leaders = next;
-      feed.setWatchedAccounts([...leaders]);
+      // Portal mode needs explicit account subscriptions; the chain feed
+      // already carries every trade, so the leaders set alone is enough.
+      if (!useChain) feed.setWatchedAccounts([...leaders]);
       log.info(`copy leaders now: ${leaders.size ? [...leaders].map((a) => a.slice(0, 8) + '…').join(', ') : 'none yet (auto-discovery keeps scoring)'}`);
     }
   };
@@ -228,7 +240,7 @@ async function main() {
   if (copyEnabled) {
     feed.on('open', refreshLeaders);
     setInterval(refreshLeaders, (cfg.copy?.auto?.refreshMin ?? 10) * 60_000);
-    setInterval(() => book.save(), 30_000);
+    setInterval(() => { book.prune(); book.save(); }, 30_000);
   }
 
   // Safety net: evaluate time-based exits/drops even for tokens that go silent.
@@ -238,7 +250,9 @@ async function main() {
 
   // Status heartbeat.
   setInterval(() => {
-    const src = useRpc ? `curves ${rpcFeed.watchCount}` : `scored ${book.size()} wallets`;
+    const src = useRpc ? `curves ${rpcFeed.watchCount}`
+      : useChain ? `chain events ${chainFeed.eventCount} | scored ${book.size()} wallets`
+      : `scored ${book.size()} wallets`;
     log.info(`status | watching ${trackers.size} tokens | ${src} | ${portfolio.summary()}`);
   }, 60_000);
 
@@ -252,11 +266,13 @@ async function main() {
     }
     feed.stop();
     rpcFeed?.stop();
+    chainFeed?.stop();
     process.exit(0);
   });
 
   feed.connect();
   rpcFeed?.connect();
+  chainFeed?.connect();
 }
 
 main().catch((err) => {
