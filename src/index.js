@@ -9,6 +9,7 @@ import { LiveExecutor } from './executors/live.js';
 import { Logger } from './logger.js';
 import { WalletBook } from './walletbook.js';
 import { MetaDetector } from './meta.js';
+import { Recorder } from './recorder.js';
 
 function parseArgs(argv) {
   const args = {};
@@ -95,6 +96,9 @@ async function main() {
       log.error('entries are impossible — set a funded PUMPBOT_PORTAL_KEY or switch dataSource to "chain".');
     });
   }
+
+  // Tape recorder: raw launches + young-token trades, for the backtester/tuner.
+  const recorder = (cfg.recorder?.enabled ?? true) && !useRpc ? new Recorder(cfg.recorder ?? {}, log) : null;
 
   const trackers = new Map(); // mint -> TokenTracker
   const busy = new Set(); // mints with an order in flight
@@ -187,6 +191,7 @@ async function main() {
   };
 
   feed.on('newToken', (msg) => {
+    recorder?.onCreate(msg);
     const wave = cfg.meta?.enabled ? meta.onLaunch(msg.name, msg.symbol) : { hot: false };
     if (trackers.size >= cfg.watch.maxTrackedTokens) return; // shed load, never queue stale tokens
     const t = new TokenTracker(msg, cfg);
@@ -200,6 +205,7 @@ async function main() {
   // Full per-trade path (buyer identity -> unique-buyer filter, copy, scoring).
   // Fed by the paid portal stream OR the free chain feed — identical shape.
   const onTradeMsg = (msg) => {
+    recorder?.onTrade(msg);
     book.onTrade(msg); // score every wallet we can see, always
     if (leaders.has(msg.traderPublicKey)) onLeaderTrade(msg);
     const t = trackers.get(msg.mint);
@@ -247,6 +253,7 @@ async function main() {
   setInterval(() => {
     for (const t of trackers.values()) act(t, t.onTick());
   }, 1000);
+  if (recorder) setInterval(() => recorder.prune(), 60_000);
 
   // Status heartbeat.
   setInterval(() => {
@@ -267,6 +274,7 @@ async function main() {
     feed.stop();
     rpcFeed?.stop();
     chainFeed?.stop();
+    recorder?.stop();
     process.exit(0);
   });
 

@@ -9,6 +9,7 @@
     "paper": "node src/index.js --mode paper",
     "live": "node src/index.js --mode live",
     "leaderboard": "node src/index.js --leaderboard",
+    "backtest": "node src/backtest.js",
     "test": "node --test"
   },
   "dependencies": {
