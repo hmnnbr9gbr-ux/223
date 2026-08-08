@@ -10,6 +10,7 @@
     "live": "node src/index.js --mode live",
     "leaderboard": "node src/index.js --leaderboard",
     "backtest": "node src/backtest.js",
+    "analyze": "node src/analyze.js",
     "test": "node --test"
   },
   "dependencies": {
