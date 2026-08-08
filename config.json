@@ -1,0 +1,40 @@
+{
+  "mode": "paper",
+  "buyAmountSol": 0.03,
+  "maxConcurrentPositions": 2,
+  "watch": {
+    "windowSec": 90,
+    "maxTrackedTokens": 60
+  },
+  "entry": {
+    "minAgeSec": 10,
+    "maxDevBuySol": 2.0,
+    "minUniqueBuyers": 8,
+    "minNetInflowSol": 1.5,
+    "maxTopBuyerShare": 0.4
+  },
+  "exit": {
+    "takeProfitPct": 60,
+    "stopLossPct": 25,
+    "trailingStopPct": 25,
+    "armTrailingAtPct": 40,
+    "maxHoldSec": 300,
+    "exitOnCreatorSell": true
+  },
+  "risk": {
+    "dailyLossLimitSol": 0.15,
+    "maxSpendPerDaySol": 0.5
+  },
+  "fees": {
+    "pumpFeePct": 1.0,
+    "portalFeePct": 0.5,
+    "txFeeSol": 0.0015,
+    "slippagePct": 2
+  },
+  "live": {
+    "rpcUrl": "https://api.mainnet-beta.solana.com",
+    "slippagePct": 5,
+    "priorityFeeSol": 0.0005,
+    "pool": "auto"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "pumpfun-bot",
+  "version": "0.1.0",
+  "description": "Paper-first pump.fun momentum trading bot (PumpPortal feed, simulated or live execution)",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node src/index.js",
+    "paper": "node src/index.js --mode paper",
+    "live": "node src/index.js --mode live",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "@solana/web3.js": "^1.95.0",
+    "bs58": "^6.0.0"
+  }
+}
