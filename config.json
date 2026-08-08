@@ -13,7 +13,7 @@
     "maxDevBuySol": 2.0,
     "minUniqueBuyers": 8,
     "minNetInflowSol": 1.5,
-    "maxTopBuyerShare": 0.4
+    "maxTopBuyerShare": 0.2
   },
   "reserve": {
     "minTicks": 6,

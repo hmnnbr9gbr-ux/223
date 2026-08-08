@@ -92,10 +92,14 @@ export function loadTape(files) {
 }
 
 const GRID = {
-  'entry.minUniqueBuyers': [4, 6, 8, 12],
-  'entry.minNetInflowSol': [0.8, 1.5, 2.5],
-  'exit.takeProfitPct': [40, 60, 100],
-  'exit.stopLossPct': [20, 25, 35],
+  // Directions the tape analysis pointed at: tight anti-whale filter (the
+  // strongest pump signal), a real buyer floor, and letting winners RUN far
+  // past +100% to see if the fat tail can pay for the many losers + fees.
+  'entry.minUniqueBuyers': [4, 8, 20],
+  'entry.maxTopBuyerShare': [0.11, 0.2, 0.4],
+  'entry.minNetInflowSol': [0.8, 2.5],
+  'exit.takeProfitPct': [60, 150, 300],
+  'exit.stopLossPct': [20, 35],
   'exit.maxHoldSec': [120, 300],
 };
 
@@ -148,7 +152,7 @@ async function main() {
     return;
   }
 
-  console.log('grid search running (216 combos)…');
+  console.log('grid search running (216+ combos)…');
   const results = await gridSearch(events, cfg);
   console.log('\nTOP 10 CONFIGS BY PNL:');
   for (const r of results.slice(0, 10)) {
