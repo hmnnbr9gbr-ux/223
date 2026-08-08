@@ -25,18 +25,54 @@ This bot contains no manipulation features by design: no bundled buys, no
 multi-wallet games, no fake volume, no wash trading. It watches, buys, manages
 risk, and sells — with your own single wallet.
 
-## Quick start (paper mode — no wallet, ~$1.50 one-time for market data)
+## Quick start (paper mode — no wallet, no key, no money)
 
-Heads-up on the one unavoidable cost: PumpPortal's free WebSocket only streams
-*token creations*. The per-token **trade stream — which this strategy needs to
-see demand — requires a PumpPortal API key funded with ≥0.02 SOL (~$1.50)**.
-Create one at [pumpportal.fun](https://pumpportal.fun), fund it, and export it.
-(This data key is separate from any trading wallet; live trading via
-`trade-local` does not use it.) Without the key the bot runs, watches launches,
-and warns loudly that it can never enter.
+The default `dataSource` is `"rpc"`, which needs **no API key at all**:
 
 ```bash
 npm install
+npm run paper
+```
+
+That's it. This works because pump.fun's data is on-chain and public:
+
+- **Discovery** uses PumpPortal's *free* `subscribeNewToken` stream (no key).
+- **Price + money-flow** comes from reading each token's bonding-curve account
+  directly on a public **Solana RPC** (`accountSubscribe`), decoded locally in
+  `src/pumpcurve.js`. This is the same reserve data PumpPortal charges for —
+  free, because the blockchain is free to read.
+
+### The two data sources
+
+| | `dataSource: "rpc"` (default, free) | `dataSource: "portal"` (paid) |
+|---|---|---|
+| Cost | $0 | 0.01 SOL / 10k trade events |
+| Key needed | none | funded PumpPortal key |
+| Price / SOL inflow | ✅ (on-chain reserves) | ✅ |
+| Unique-buyer & whale filters | ❌ (reserve momentum instead) | ✅ |
+| Meta-wave detection | ✅ | ✅ |
+| Copy trading & wallet scoring | ❌ (needs per-trade identity) | ✅ |
+
+Why the split: a bonding-curve account tells you *how much* SOL is in the curve
+(→ price, net inflow) but not *who* traded. Per-wallet features (the
+unique-buyer filter, copy trading, the leaderboard) need per-trade identity,
+which only the paid trade stream (or heavier on-chain transaction parsing)
+provides. In free mode the bot substitutes **reserve-momentum** entry filters:
+minimum reserve up-ticks (`reserve.minTicks`, an activity proxy) plus minimum
+net SOL inflow (`reserve.minNetInflowSol`).
+
+**Public RPC warning:** `api.mainnet-beta.solana.com` (the default) is heavily
+rate-limited and will throttle or drop subscriptions under load. For real use,
+put a free Helius / QuickNode / Triton WebSocket URL in `config.rpcWsUrl` — it
+massively improves how many tokens you can watch and how fast reserve updates
+arrive.
+
+### To use copy trading / wallet scoring (paid data)
+
+PumpPortal's per-trade streams need an API key funded with ≥0.02 SOL. Set
+`dataSource: "portal"` in `config.json` and:
+
+```bash
 export PUMPBOT_PORTAL_KEY="your-pumpportal-api-key"
 npm run paper
 ```
@@ -164,16 +200,21 @@ Live-mode caveats:
 
 ```
 src/
-  index.js          engine: wires feed → trackers → executor → portfolio
-  feed.js           PumpPortal WebSocket client (auto-reconnect, per-mint subs)
+  index.js          engine: wires feeds → trackers → executor → portfolio
+  feed.js           PumpPortal WS client (free new-token; paid trade/account)
+  rpcfeed.js        FREE Solana RPC accountSubscribe → bonding-curve reserves
+  pumpcurve.js      decode a bonding-curve account (borsh) from chain data
   strategy.js       TokenTracker state machine: WATCHING → HOLDING → DONE
   curve.js          bonding-curve math (constant product on virtual reserves)
+  meta.js           narrative-wave (keyword) detector
+  walletbook.js     per-wallet P&L scoring + private leaderboard (paid mode)
   portfolio.js      bankroll accounting + risk gate
   executors/
     paper.js        simulated fills w/ pessimistic fee+slippage model
     live.js         PumpPortal trade-local + local signing (lazy-loaded deps)
   logger.js         console + JSONL trade log
-test/               node:test suites for curve math and strategy logic
+test/               node:test suites (curve math, strategy, reserve mode,
+                    decoder, meta, walletbook) — 38 tests
 ```
 
 ## Tuning ideas once you have paper data

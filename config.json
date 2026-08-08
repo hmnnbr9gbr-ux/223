@@ -1,5 +1,7 @@
 {
   "mode": "paper",
+  "dataSource": "rpc",
+  "rpcWsUrl": "wss://api.mainnet-beta.solana.com",
   "buyAmountSol": 0.03,
   "maxConcurrentPositions": 2,
   "watch": {
@@ -12,6 +14,10 @@
     "minUniqueBuyers": 8,
     "minNetInflowSol": 1.5,
     "maxTopBuyerShare": 0.4
+  },
+  "reserve": {
+    "minTicks": 6,
+    "minNetInflowSol": 1.5
   },
   "exit": {
     "takeProfitPct": 60,

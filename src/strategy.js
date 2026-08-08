@@ -33,6 +33,12 @@ export class TokenTracker {
     this.position = null; // set by the engine on fill
     this.metaHot = false; // set by the engine when the token rides a hot narrative wave
     this.source = 'scan'; // 'scan' | 'copy'
+    this.bondingCurveKey = createMsg.bondingCurveKey ?? null;
+
+    // Reserve-mode (free on-chain RPC feed) tracking.
+    this.initialVSol = null;
+    this.reserveTicks = 0; // count of upward reserve moves = activity proxy
+    this.graduated = false;
   }
 
   get ageSec() { return (Date.now() - this.createdAt) / 1000; }
@@ -66,6 +72,42 @@ export class TokenTracker {
     if (this.state === 'WATCHING') return this.evaluateEntry(now);
     if (this.state === 'HOLDING') return this.evaluateExit(now);
     return Decision.NONE;
+  }
+
+  /**
+   * Reserve update from the free RPC feed (no per-trader identity available).
+   * Drives the reserve-momentum entry path and price-based exits.
+   */
+  onReserve({ vSol, vTok, complete }, now = Date.now()) {
+    if (this.initialVSol === null) this.initialVSol = vSol;
+    if (vSol > this.vSol) this.reserveTicks += 1;
+    this.vSol = vSol;
+    this.vTok = vTok;
+    if (complete) this.graduated = true;
+
+    if (this.state === 'WATCHING') return this.evaluateReserveEntry(now);
+    if (this.state === 'HOLDING') return this.evaluateExit(now);
+    return Decision.NONE;
+  }
+
+  get reserveNetInflowSol() {
+    return this.initialVSol === null ? 0 : this.vSol - this.initialVSol;
+  }
+
+  evaluateReserveEntry(now = Date.now()) {
+    const r = this.cfg.reserve ?? {};
+    const e = this.cfg.entry;
+    const age = (now - this.createdAt) / 1000;
+
+    if (age > this.cfg.watch.windowSec) return Decision.DROP;
+    if (this.graduated) return Decision.DROP; // already migrated off the curve
+    if (age < e.minAgeSec) return Decision.NONE;
+    if (this.devBuySol > e.maxDevBuySol) return Decision.DROP;
+
+    const relief = this.metaHot ? (this.cfg.meta?.inflowRelief ?? 1) : 1;
+    if (this.reserveTicks < (r.minTicks ?? 6)) return Decision.NONE;
+    if (this.reserveNetInflowSol < (r.minNetInflowSol ?? e.minNetInflowSol) * relief) return Decision.NONE;
+    return Decision.ENTER;
   }
 
   evaluateEntry(now = Date.now()) {

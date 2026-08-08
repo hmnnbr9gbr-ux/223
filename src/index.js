@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { Feed } from './feed.js';
+import { RpcFeed } from './rpcfeed.js';
 import { TokenTracker, Decision } from './strategy.js';
 import { Portfolio } from './portfolio.js';
 import { PaperExecutor } from './executors/paper.js';
@@ -57,25 +58,46 @@ async function main() {
 
   const portfolio = new Portfolio(cfg, log);
   const meta = new MetaDetector(cfg.meta ?? {});
+  const useRpc = (cfg.dataSource ?? 'rpc') === 'rpc';
   const portalKey = process.env.PUMPBOT_PORTAL_KEY ?? null;
-  if (!portalKey) {
-    log.warn('no PUMPBOT_PORTAL_KEY set — PumpPortal requires an API key funded with >=0.02 SOL for');
-    log.warn('trade + account streams. Without one the bot sees launches but can NEVER enter a trade.');
-    log.warn('Get a key at pumpportal.fun, fund it, then: export PUMPBOT_PORTAL_KEY=<key>');
-  }
+
+  // Discovery always uses PumpPortal's FREE new-token stream (no key needed).
   const feed = new Feed(log, { apiKey: portalKey });
-  feed.on('degraded', (message) => {
-    log.error(`feed is DEGRADED (creations only, no trade data): ${message}`);
-    log.error('entries are impossible in this state — set a funded PUMPBOT_PORTAL_KEY and restart.');
-  });
+
+  // Price / inflow data source.
+  let rpcFeed = null;
+  let copyEnabled = cfg.copy?.enabled ?? false;
+  if (useRpc) {
+    log.info('data source: FREE on-chain RPC (bonding-curve reserves) — no PumpPortal key needed');
+    rpcFeed = new RpcFeed(log, cfg.rpcWsUrl ?? 'wss://api.mainnet-beta.solana.com');
+    if (copyEnabled) {
+      copyEnabled = false;
+      log.warn('copy trading + wallet scoring need per-trade identity (metered PumpPortal streams);');
+      log.warn('they are OFF in free rpc mode. Set dataSource:"portal" + PUMPBOT_PORTAL_KEY to use them.');
+    }
+    log.warn('rpc mode note: reserves give price + SOL inflow, but NOT unique-buyer count or');
+    log.warn('whale share — entries use reserve-momentum filters instead. Public RPCs are rate-limited;');
+    log.warn('a free Helius/QuickNode WSS in config.rpcWsUrl is strongly recommended.');
+  } else {
+    if (!portalKey) {
+      log.warn('portal data mode needs PUMPBOT_PORTAL_KEY (funded >=0.02 SOL) for trade/account streams.');
+      log.warn('Without it the bot sees launches but can NEVER enter. Use dataSource:"rpc" for a free path.');
+    }
+    feed.on('degraded', (message) => {
+      log.error(`feed is DEGRADED (creations only, no trade data): ${message}`);
+      log.error('entries are impossible — set a funded PUMPBOT_PORTAL_KEY or switch dataSource to "rpc".');
+    });
+  }
 
   const trackers = new Map(); // mint -> TokenTracker
   const busy = new Set(); // mints with an order in flight
-  let leaders = new Set(cfg.copy?.enabled ? cfg.copy.wallets ?? [] : []);
+  let leaders = new Set(copyEnabled ? cfg.copy.wallets ?? [] : []);
 
   const drop = (mint) => {
+    const t = trackers.get(mint);
     trackers.delete(mint);
-    feed.unwatchToken(mint);
+    if (useRpc) { if (t?.bondingCurveKey) rpcFeed.unwatchCurve(t.bondingCurveKey); }
+    else feed.unwatchToken(mint);
   };
 
   const enter = async (t, { source = 'scan', buyAmountSol = cfg.buyAmountSol, leader = null } = {}) => {
@@ -88,11 +110,14 @@ async function main() {
       t.openPosition(fill);
       t.source = source;
       portfolio.onBuy(t.mint, t.symbol, fill);
+      const demand = useRpc
+        ? { reserveTicks: t.reserveTicks, netInflowSol: +t.reserveNetInflowSol.toFixed(3) }
+        : { buyers: t.uniqueBuyers, netInflowSol: +t.netInflowSol.toFixed(3) };
       log.trade({
         action: 'BUY', mode: cfg.mode, source, leader, mint: t.mint, symbol: t.symbol,
         metaHot: t.metaHot || undefined,
         costSol: +fill.costSol.toFixed(6), tokens: Math.round(fill.tokens),
-        price: fill.price, buyers: t.uniqueBuyers, netInflowSol: +t.netInflowSol.toFixed(3),
+        price: fill.price, ...demand,
         ageSec: +t.ageSec.toFixed(1), sig: fill.sig,
       });
     } catch (err) {
@@ -133,7 +158,7 @@ async function main() {
 
   // Copy-trading: mirror a leader's buy on bonding-curve tokens; follow their sell.
   const onLeaderTrade = (msg) => {
-    if (!cfg.copy?.enabled) return;
+    if (!copyEnabled) return;
     const held = trackers.get(msg.mint);
     if (msg.txType === 'buy') {
       if (held?.state === 'HOLDING' || (msg.pool && msg.pool !== 'pump')) return;
@@ -161,9 +186,11 @@ async function main() {
     t.metaHot = wave.hot;
     if (wave.hot) log.info(`meta wave "${wave.word}" — relaxed entry for ${t.symbol} (${t.mint.slice(0, 8)}…)`);
     trackers.set(t.mint, t);
-    feed.watchToken(t.mint);
+    if (useRpc) rpcFeed.watchCurve(t.mint, t.bondingCurveKey);
+    else feed.watchToken(t.mint);
   });
 
+  // Paid path: full per-trade data (buyer identity -> unique-buyer filter, copy, scoring).
   feed.on('trade', (msg) => {
     book.onTrade(msg); // score every wallet we can see, always
     if (leaders.has(msg.traderPublicKey)) onLeaderTrade(msg);
@@ -171,8 +198,16 @@ async function main() {
     if (t) act(t, t.onTrade(msg));
   });
 
+  // Free path: bonding-curve reserve updates (price + inflow, no buyer identity).
+  if (useRpc) {
+    rpcFeed.on('reserve', (u) => {
+      const t = trackers.get(u.mint);
+      if (t) act(t, t.onReserve(u));
+    });
+  }
+
   const refreshLeaders = () => {
-    if (!cfg.copy?.enabled) return;
+    if (!copyEnabled) return;
     const manual = cfg.copy.wallets ?? [];
     let auto = [];
     if (cfg.copy.auto?.enabled) {
@@ -190,9 +225,11 @@ async function main() {
     }
   };
 
-  feed.on('open', refreshLeaders);
-  setInterval(refreshLeaders, (cfg.copy?.auto?.refreshMin ?? 10) * 60_000);
-  setInterval(() => book.save(), 30_000);
+  if (copyEnabled) {
+    feed.on('open', refreshLeaders);
+    setInterval(refreshLeaders, (cfg.copy?.auto?.refreshMin ?? 10) * 60_000);
+    setInterval(() => book.save(), 30_000);
+  }
 
   // Safety net: evaluate time-based exits/drops even for tokens that go silent.
   setInterval(() => {
@@ -201,22 +238,25 @@ async function main() {
 
   // Status heartbeat.
   setInterval(() => {
-    log.info(`status | watching ${trackers.size} tokens | scored ${book.size()} wallets | ${portfolio.summary()}`);
+    const src = useRpc ? `curves ${rpcFeed.watchCount}` : `scored ${book.size()} wallets`;
+    log.info(`status | watching ${trackers.size} tokens | ${src} | ${portfolio.summary()}`);
   }, 60_000);
 
   process.on('SIGINT', () => {
     log.info('shutting down');
-    book.save();
+    if (copyEnabled) book.save();
     log.info(`FINAL | ${portfolio.summary()}`);
     if (portfolio.openPositions.size > 0) {
       log.warn(`open positions remain: ${[...portfolio.openPositions.keys()].join(', ')}` +
         (live ? ' — sell them manually or restart the bot.' : ''));
     }
     feed.stop();
+    rpcFeed?.stop();
     process.exit(0);
   });
 
   feed.connect();
+  rpcFeed?.connect();
 }
 
 main().catch((err) => {
