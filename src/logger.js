@@ -7,6 +7,15 @@ function ts() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
+// Token names/symbols come from anonymous internet strangers and get
+// interpolated into log lines. Strip control characters (ANSI escapes,
+// carriage returns, C1 codes, line separators) so a malicious token name
+// can't spoof log lines or drive the terminal.
+function scrub(msg) {
+  // eslint-disable-next-line no-control-regex
+  return String(msg).replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g, '');
+}
+
 export class Logger {
   constructor({ tradeLogFile = null } = {}) {
     this.tradeLogFile = tradeLogFile;
@@ -18,9 +27,9 @@ export class Logger {
     return new Logger({ tradeLogFile: path.join(LOG_DIR, `trades-${stamp}.jsonl`) });
   }
 
-  info(msg) { console.log(`${ts()} | ${msg}`); }
-  warn(msg) { console.warn(`${ts()} | WARN | ${msg}`); }
-  error(msg) { console.error(`${ts()} | ERROR | ${msg}`); }
+  info(msg) { console.log(`${ts()} | ${scrub(msg)}`); }
+  warn(msg) { console.warn(`${ts()} | WARN | ${scrub(msg)}`); }
+  error(msg) { console.error(`${ts()} | ERROR | ${scrub(msg)}`); }
 
   trade(event) {
     const record = { at: new Date().toISOString(), ...event };

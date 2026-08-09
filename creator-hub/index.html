@@ -182,9 +182,15 @@ const CONFIG = {
 /* ---------- renderer (you shouldn't need to touch this) ---------- */
 (function render(c) {
   const $ = (id) => document.getElementById(id);
+  // Escape config values before they hit innerHTML, and only allow link
+  // schemes that can't run script — so a pasted config can't inject code.
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (ch) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  const safeUrl = (u) => /^(https?:|mailto:|#)/i.test(String(u ?? '').trim()) ? esc(String(u).trim()) : '#';
+  const safeColor = (v) => /^[#a-zA-Z0-9(),.%\s-]{1,40}$/.test(String(v ?? '')) ? v : null;
   const r = document.documentElement;
-  if (c.theme?.accent) r.style.setProperty('--accent', c.theme.accent);
-  if (c.theme?.accent2) r.style.setProperty('--accent-2', c.theme.accent2);
+  if (safeColor(c.theme?.accent)) r.style.setProperty('--accent', c.theme.accent);
+  if (safeColor(c.theme?.accent2)) r.style.setProperty('--accent-2', c.theme.accent2);
 
   $('avatarInit').textContent = c.avatarInitials || (c.name?.[0] ?? '?');
   $('name').textContent = c.name || '';
@@ -194,9 +200,9 @@ const CONFIG = {
   if (c.isLive) $('livePill').classList.add('on');
 
   $('links').innerHTML = (c.links || []).map((l) => `
-    <a class="link${l.primary ? ' primary' : ''}" href="${l.url}" target="_blank" rel="noopener">
-      <span class="ico">${l.icon || '🔗'}</span>
-      <span class="txt">${l.label}${l.sub ? `<span class="sub">${l.sub}</span>` : ''}</span>
+    <a class="link${l.primary ? ' primary' : ''}" href="${safeUrl(l.url)}" target="_blank" rel="noopener">
+      <span class="ico">${esc(l.icon) || '🔗'}</span>
+      <span class="txt">${esc(l.label)}${l.sub ? `<span class="sub">${esc(l.sub)}</span>` : ''}</span>
       <span class="arrow">→</span>
     </a>`).join('');
 
@@ -204,7 +210,7 @@ const CONFIG = {
     $('scheduleWrap').hidden = false;
     $('schedule').innerHTML = c.schedule.map((s, i) => `
       <div class="day${!s.t ? ' off' : ''}${i === c.liveDayIndex ? ' live-day' : ''}">
-        <div class="d">${s.d}</div><div class="t">${s.t || '—'}</div>
+        <div class="d">${esc(s.d)}</div><div class="t">${esc(s.t) || '—'}</div>
       </div>`).join('');
   }
 
@@ -212,9 +218,9 @@ const CONFIG = {
     $('gearWrap').hidden = false;
     $('gearTitle').textContent = c.gearTitle || 'My setup';
     $('gear').innerHTML = c.gear.map((g) => `
-      <a class="gear-item" href="${g.url}" target="_blank" rel="noopener">
-        <span class="ico">${g.icon || '📦'}</span>
-        <span><div class="g-name">${g.name}</div><div class="g-cat">${g.cat || ''}</div></span>
+      <a class="gear-item" href="${safeUrl(g.url)}" target="_blank" rel="noopener">
+        <span class="ico">${esc(g.icon) || '📦'}</span>
+        <span><div class="g-name">${esc(g.name)}</div><div class="g-cat">${esc(g.cat) || ''}</div></span>
         <span class="g-cta">View →</span>
       </a>`).join('');
   }

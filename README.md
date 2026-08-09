@@ -186,7 +186,11 @@ npm run live
 How a live order flows: the bot POSTs the trade intent to
 `pumpportal.fun/api/trade-local`, receives an *unsigned* transaction, signs it
 locally with your key, and submits it to the RPC in `live.rpcUrl`. Your key is
-read from the environment and never sent anywhere.
+read from the environment and never sent anywhere. Before signing, the
+transaction is verified (`src/txguard.js`): only expected programs, no
+authority/delegate changes, and total spend capped at the trade amount plus
+fees — so a compromised builder response can't drain the wallet. See
+`SECURITY.md` for the full threat model.
 
 Live-mode caveats:
 
@@ -212,6 +216,7 @@ src/
   meta.js           narrative-wave (keyword) detector
   walletbook.js     per-wallet P&L scoring + private leaderboard (paid mode)
   portfolio.js      bankroll accounting + risk gate
+  txguard.js        pre-sign transaction verifier (program allowlist + spend cap)
   executors/
     paper.js        simulated fills w/ pessimistic fee+slippage model
     live.js         PumpPortal trade-local + local signing (lazy-loaded deps)

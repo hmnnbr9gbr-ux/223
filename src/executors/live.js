@@ -1,6 +1,10 @@
 import { buyTokensOut } from '../curve.js';
+import { guardTransaction, normalizeWeb3Message } from '../txguard.js';
 
 const TRADE_LOCAL_URL = 'https://pumpportal.fun/api/trade-local';
+const LAMPORTS = 1e9;
+// Headroom on the outflow cap for pump fees, ATA rent, and tx fees.
+const FEE_MARGIN_SOL = 0.01;
 
 // Live execution via PumpPortal's local-transaction API: the API builds the
 // transaction, we sign it locally with YOUR key (the key never leaves this
@@ -29,7 +33,7 @@ export class LiveExecutor {
     this.ready = true;
   }
 
-  async trade(body) {
+  async trade(body, maxSpendSol) {
     const res = await fetch(TRADE_LOCAL_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -37,6 +41,13 @@ export class LiveExecutor {
     });
     if (!res.ok) throw new Error(`trade-local ${res.status}: ${await res.text()}`);
     const tx = this.web3.VersionedTransaction.deserialize(new Uint8Array(await res.arrayBuffer()));
+    // Never blind-sign what a remote service built: verify the transaction
+    // only touches expected programs and can't spend more than this trade.
+    const verdict = guardTransaction(normalizeWeb3Message(tx.message), {
+      signer: this.keypair.publicKey.toBase58(),
+      maxLamportsOut: (maxSpendSol + FEE_MARGIN_SOL) * LAMPORTS,
+    });
+    if (!verdict.ok) throw new Error(`REFUSED to sign trade-local transaction: ${verdict.reason}`);
     tx.sign([this.keypair]);
     const sig = await this.connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
     return sig;
@@ -45,6 +56,9 @@ export class LiveExecutor {
   async buy(tracker, solAmount) {
     if (!this.ready) await this.init();
     const l = this.cfg.live;
+    const f = this.cfg.fees;
+    // Most SOL this trade may move: spend + slippage tolerance + fees + tip.
+    const maxSpendSol = solAmount * (1 + (l.slippagePct + f.pumpFeePct + f.portalFeePct) / 100) + l.priorityFeeSol;
     const sig = await this.trade({
       publicKey: this.keypair.publicKey.toBase58(),
       action: 'buy',
@@ -54,10 +68,9 @@ export class LiveExecutor {
       slippage: l.slippagePct,
       priorityFee: l.priorityFeeSol,
       pool: l.pool,
-    });
+    }, maxSpendSol);
     // Approximate the fill from current curve state; exact accounting would
     // require parsing the confirmed transaction.
-    const f = this.cfg.fees;
     const solAfterFees = solAmount * (1 - (f.pumpFeePct + f.portalFeePct) / 100);
     const tokens = buyTokensOut(tracker.vSol, tracker.vTok, solAfterFees);
     const costSol = solAmount + l.priorityFeeSol;
@@ -77,7 +90,7 @@ export class LiveExecutor {
       slippage: l.slippagePct,
       priorityFee: l.priorityFeeSol,
       pool: l.pool,
-    });
+    }, l.priorityFeeSol); // a sell only spends the tip; proceeds flow in
     const p = tracker.position;
     const est = p ? p.tokens * tracker.currentPrice : 0;
     this.log.info(`live SELL sent: https://solscan.io/tx/${sig}`);
