@@ -53,12 +53,23 @@ export class TokenTracker {
 
   get uniqueBuyers() { return this.buyersGross.size; }
 
+  /**
+   * Adopt the curve state carried by a trade message without scoring it as
+   * demand. The copy path needs this: it acts on a leader's trade before the
+   * normal onTrade bookkeeping runs, and pricing a fill off pre-trade reserves
+   * (or off a launch message that carried none) is wrong or fatal.
+   */
+  syncCurve(msg) {
+    if (Number(msg.vSolInBondingCurve) > 0) this.vSol = Number(msg.vSolInBondingCurve);
+    if (Number(msg.vTokensInBondingCurve) > 0) this.vTok = Number(msg.vTokensInBondingCurve);
+    return this.vSol > 0 && this.vTok > 0;
+  }
+
   /** Feed a trade event; returns a Decision for the engine to act on. */
   onTrade(msg, now = Date.now()) {
     const sol = Number(msg.solAmount ?? 0);
     const trader = msg.traderPublicKey ?? 'unknown';
-    if (Number(msg.vSolInBondingCurve) > 0) this.vSol = Number(msg.vSolInBondingCurve);
-    if (Number(msg.vTokensInBondingCurve) > 0) this.vTok = Number(msg.vTokensInBondingCurve);
+    this.syncCurve(msg);
 
     if (msg.txType === 'buy') {
       this.grossInflowSol += sol;

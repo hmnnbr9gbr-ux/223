@@ -102,6 +102,7 @@ async function main() {
 
   const trackers = new Map(); // mint -> TokenTracker
   const busy = new Set(); // mints with an order in flight
+  const warnedRejects = new Set(); // risk-gate reasons already surfaced
   let leaders = new Set(copyEnabled ? cfg.copy.wallets ?? [] : []);
 
   const drop = (mint) => {
@@ -114,13 +115,22 @@ async function main() {
   const enter = async (t, { source = 'scan', buyAmountSol = cfg.buyAmountSol, leader = null } = {}) => {
     if (busy.has(t.mint) || t.state === 'HOLDING' || t.state === 'DONE') return;
     const reject = portfolio.rejectEntry(buyAmountSol);
-    if (reject) return; // keep watching; limits may free up
+    if (reject) {
+      // Say it once per reason: a bot that has quietly stopped trading for the
+      // day looks identical to a bot that just isn't finding setups.
+      if (!warnedRejects.has(reject)) {
+        warnedRejects.add(reject);
+        log.warn(`entry blocked: ${reject} — no new entries until this clears`);
+      }
+      return; // keep watching; limits may free up
+    }
     busy.add(t.mint);
     try {
       const fill = await executor.buy(t, buyAmountSol);
       t.openPosition(fill);
       t.source = source;
       portfolio.onBuy(t.mint, t.symbol, fill);
+      warnedRejects.clear(); // limits are flowing again; re-arm the warnings
       const demand = useRpc
         ? { reserveTicks: t.reserveTicks, netInflowSol: +t.reserveNetInflowSol.toFixed(3) }
         : { buyers: t.uniqueBuyers, netInflowSol: +t.netInflowSol.toFixed(3) };
@@ -174,12 +184,20 @@ async function main() {
     if (msg.txType === 'buy') {
       if (held?.state === 'HOLDING' || (msg.pool && msg.pool !== 'pump')) return;
       let t = held;
+      // We run ahead of the tracker's own bookkeeping, so adopt this trade's
+      // reserves before sizing a fill against them.
+      if (t && !t.syncCurve(msg)) {
+        log.warn(`copy skipped ${msg.mint.slice(0, 8)}…: no usable curve state yet`);
+        return;
+      }
       if (!t) {
         // Synthetic tracker: the account-trade message carries curve state.
         t = new TokenTracker({ ...msg, solAmount: 0 }, cfg);
         t.creator = null; // unknown for tokens we didn't see launch
         trackers.set(t.mint, t);
-        feed.watchToken(t.mint);
+        // Chain mode already carries every trade, and drop() has no portal
+        // subscription to unwind there — subscribing would leak `watched`.
+        if (!useChain) feed.watchToken(t.mint);
       }
       enter(t, { source: 'copy', buyAmountSol: cfg.copy.buyAmountSol ?? cfg.buyAmountSol, leader: msg.traderPublicKey });
     } else if (msg.txType === 'sell' && cfg.copy.followSells) {

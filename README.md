@@ -100,7 +100,7 @@ watches the first `watch.windowSec` (90s) and enters only if ALL of these hold:
 | `maxDevBuySol` | 2.0 | oversized dev buys correlate with dump-on-you launches |
 | `minUniqueBuyers` | 8 | demand must be distributed, not one wallet |
 | `minNetInflowSol` | 1.5 | real net SOL must be flowing in (buys minus sells) |
-| `maxTopBuyerShare` | 40% | one wallet dominating inflow ≈ bundler/whale bait |
+| `maxTopBuyerShare` | 20% | one wallet dominating inflow ≈ bundler/whale bait |
 | dev hasn't sold | — | a creator selling during the watch window is disqualifying |
 
 **Exit — first trigger wins.**
@@ -160,7 +160,7 @@ vibes.
 |---|---|
 | Position size | 0.03 SOL (~$2.25 at SOL=$75) |
 | Max concurrent positions | 2 |
-| Daily realized-loss limit | 0.15 SOL — bot stops entering for the day |
+| Daily realized-loss limit | 0.15 SOL — bot stops entering, resets at UTC midnight |
 | Daily spend cap | 0.5 SOL |
 
 Everything above lives in `config.json`. Copy it to `config.local.json`
